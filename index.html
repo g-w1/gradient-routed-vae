@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gradient Routed VAE: Axis Aligned Directions</title>
+    <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js"></script>
+    <style>
+        canvas {
+            border: 1px solid black;
+            margin-right: 20px;
+        }
+
+        #encoding {
+            font-family: monospace;
+            white-space: pre;
+        }
+
+        .container {
+            display: flex;
+            margin-bottom: 20px;
+        }
+
+        .slider-container {
+            display: flex;
+            flex-direction: column;
+            margin-bottom: 20px;
+        }
+
+        .slider-row {
+            display: flex;
+            align-items: center;
+            margin-bottom: 5px;
+        }
+
+        .slider-row label {
+            width: 100px;
+        }
+
+        .slider-row input {
+            width: 200px;
+        }
+
+        .slider-row span {
+            width: 50px;
+            text-align: right;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>Gradient Routed VAE: Axis Aligned Directions</h1>
+    <div class="container">
+        <div>
+            <h3>Input</h3>
+            <canvas id="drawingCanvas" width="280" height="280"></canvas>
+            <br>
+            <button onclick="clearCanvas()">Clear Canvas</button>
+            <button onclick="runModel()">Run Model</button>
+            <button onclick="fetchRandomMNIST()">Get Random MNIST Image</button>
+        </div>
+        <div>
+            <h3>Output</h3>
+            <canvas id="outputCanvas" width="280" height="280"></canvas>
+        </div>
+    </div>
+    <button onclick="resetSliders()">Reset Sliders</button>
+    <h3>Custom Decoding:</h3>
+    <div class="slider-container" id="sliderContainer"></div>
+    <canvas id="customOutputCanvas" width="280" height="280"></canvas>
+
+    <script>
+        let fullSession, encoderSession, decoderSession;
+        let isDrawing = false;
+        const drawingCanvas = document.getElementById('drawingCanvas');
+        const ctx = drawingCanvas.getContext('2d');
+        ctx.strokeStyle = 'white';
+        ctx.lineWidth = 20;
+        ctx.lineCap = 'round';
+        ctx.fillStyle = 'black';
+        ctx.fillRect(0, 0, drawingCanvas.width, drawingCanvas.height);
+
+        drawingCanvas.addEventListener('mousedown', startDrawing);
+        drawingCanvas.addEventListener('mousemove', draw);
+        drawingCanvas.addEventListener('mouseup', stopDrawing);
+        drawingCanvas.addEventListener('mouseout', stopDrawing);
+
+        function startDrawing(e) {
+            isDrawing = true;
+            draw(e);
+        }
+
+        function draw(e) {
+            if (!isDrawing) return;
+            const rect = drawingCanvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+            ctx.lineTo(x, y);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.moveTo(x, y);
+        }
+
+        function stopDrawing() {
+            isDrawing = false;
+            ctx.beginPath();
+        }
+
+        function clearCanvas() {
+            ctx.fillStyle = 'black';
+            ctx.fillRect(0, 0, drawingCanvas.width, drawingCanvas.height);
+        }
+
+        async function loadModels() {
+            try {
+                fullSession = await ort.InferenceSession.create("vae_full.onnx");
+                encoderSession = await ort.InferenceSession.create("vae_encoder.onnx");
+                decoderSession = await ort.InferenceSession.create("vae_decoder.onnx");
+                console.log("Models loaded successfully");
+                createSliders();
+            } catch (e) {
+                console.error("Failed to load the models:", e);
+            }
+        }
+
+        function createSliders() {
+            const container = document.getElementById('sliderContainer');
+            for (let i = 0; i < 10; i++) {
+                const sliderRow = document.createElement('div');
+                sliderRow.className = 'slider-row';
+
+                const label = document.createElement('label');
+                label.textContent = `Dimension ${i}:`;
+
+                const slider = document.createElement('input');
+                slider.type = 'range';
+                slider.min = '0';
+                slider.max = '3';
+                slider.step = '0.05';
+                slider.value = '0';
+                slider.id = `slider${i}`;
+
+                const value = document.createElement('span');
+                value.textContent = '0.0';
+
+                slider.addEventListener('input', (e) => {
+                    value.textContent = parseFloat(e.target.value).toFixed(1);
+                    decodeCustom();
+                });
+
+                slider.addEventListener('change', decodeCustom);
+
+                sliderRow.appendChild(label);
+                sliderRow.appendChild(slider);
+                sliderRow.appendChild(value);
+
+                container.appendChild(sliderRow);
+            }
+        }
+
+        async function runModel() {
+            if (!fullSession || !encoderSession || !decoderSession) {
+                await loadModels();
+            }
+
+            const tempCanvas = document.createElement('canvas');
+            tempCanvas.width = 28;
+            tempCanvas.height = 28;
+            const tempCtx = tempCanvas.getContext('2d');
+            tempCtx.drawImage(drawingCanvas, 0, 0, 280, 280, 0, 0, 28, 28);
+
+            const imageData = tempCtx.getImageData(0, 0, 28, 28);
+            const input = new Float32Array(784);
+            for (let i = 0; i < 784; i++) {
+                input[i] = (imageData.data[i * 4] / 255);
+            }
+            console.log(input);
+
+
+            const tensorInput = new ort.Tensor('float32', input, [1, 1, 28, 28]);
+
+            try {
+                // Run encoder
+                const encoderOutputs = await encoderSession.run({ input: tensorInput });
+                const mean = encoderOutputs.mean.data;
+                const logVar = encoderOutputs.log_var.data;
+
+
+                // Set slider values
+                for (let i = 0; i < 10; i++) {
+                    const slider = document.getElementById(`slider${i}`);
+                    slider.value = mean[i];
+                    slider.nextElementSibling.textContent = mean[i].toFixed(1);
+                }
+
+                // Display quantized input on the input canvas
+                displayQuantizedInput(tempCanvas);
+
+                // Run full VAE
+                const fullOutputs = await fullSession.run({ input: tensorInput });
+                const outputData = fullOutputs.output.data;
+                decodeCustom();
+
+                displayOutput(outputData, 'outputCanvas');
+
+            } catch (e) {
+                console.error("Failed to run the model:", e);
+            }
+        }
+
+        function displayQuantizedInput(tempCanvas) {
+            const quantizedCtx = tempCanvas.getContext('2d');
+
+            // Scale up the quantized image to match the original canvas size
+            const scaledCanvas = document.createElement('canvas');
+            scaledCanvas.width = 280;
+            scaledCanvas.height = 280;
+            const scaledCtx = scaledCanvas.getContext('2d');
+            scaledCtx.imageSmoothingEnabled = false;
+            scaledCtx.drawImage(tempCanvas, 0, 0, 28, 28, 0, 0, 280, 280);
+
+            // Clear the original drawing canvas and replace it with the quantized version
+            ctx.clearRect(0, 0, drawingCanvas.width, drawingCanvas.height);
+            ctx.drawImage(scaledCanvas, 0, 0);
+        }
+
+        async function decodeCustom() {
+            if (!decoderSession) {
+                await loadModels();
+            }
+
+            const customEncoding = [];
+            for (let i = 0; i < 10; i++) {
+                customEncoding.push(parseFloat(document.getElementById(`slider${i}`).value));
+            }
+
+            const tensorInput = new ort.Tensor('float32', new Float32Array(customEncoding), [1, 10]);
+
+            try {
+                const outputs = await decoderSession.run({ z: tensorInput });
+                const outputData = outputs.output.data;
+
+                displayOutput(outputData, 'customOutputCanvas');
+
+            } catch (e) {
+                console.error("Failed to run the decoder:", e);
+            }
+        }
+
+        function resetSliders() {
+            for (let i = 0; i < 10; i++) {
+                const slider = document.getElementById(`slider${i}`);
+                slider.value = 0;
+                slider.nextElementSibling.textContent = '0.0';
+            }
+            decodeCustom();
+        }
+
+        function displayOutput(outputData, canvasId) {
+            const outputCanvas = document.getElementById(canvasId);
+            const outputCtx = outputCanvas.getContext('2d');
+            const outputImageData = outputCtx.createImageData(28, 28);
+            for (let i = 0; i < 784; i++) {
+                const value = Math.floor((1 - outputData[i]) * 255);
+                outputImageData.data[i * 4] = 255 - value;
+                outputImageData.data[i * 4 + 1] = 255 - value;
+                outputImageData.data[i * 4 + 2] = 255 - value;
+                outputImageData.data[i * 4 + 3] = 255;
+            }
+            outputCtx.putImageData(outputImageData, 0, 0);
+
+            // Scale up the output canvas
+            const scaledCanvas = document.createElement('canvas');
+            scaledCanvas.width = 280;
+            scaledCanvas.height = 280;
+            const scaledCtx = scaledCanvas.getContext('2d');
+            scaledCtx.imageSmoothingEnabled = false;
+            scaledCtx.drawImage(outputCanvas, 0, 0, 28, 28, 0, 0, 280, 280);
+            outputCtx.drawImage(scaledCanvas, 0, 0);
+        }
+
+        async function fetchRandomMNIST() {
+            try {
+                const response = await fetch('thousand.json');
+                const data = await response.json();
+                const randomIndex = Math.floor(Math.random() * data.length);
+                const randomMNIST = data[randomIndex];
+
+                // Display the random MNIST image on the canvas
+                const imageData = ctx.createImageData(28, 28);
+                for (let i = 0; i < 784; i++) {
+                    const value = randomMNIST[i];
+                    imageData.data[i * 4] = value;
+                    imageData.data[i * 4 + 1] = value;
+                    imageData.data[i * 4 + 2] = value;
+                    imageData.data[i * 4 + 3] = 255;
+                }
+
+                // Create a temporary canvas to hold the 28x28 image
+                const tempCanvas = document.createElement('canvas');
+                tempCanvas.width = 28;
+                tempCanvas.height = 28;
+                const tempCtx = tempCanvas.getContext('2d');
+                tempCtx.putImageData(imageData, 0, 0);
+
+                // Scale up the image to 280x280
+                ctx.clearRect(0, 0, drawingCanvas.width, drawingCanvas.height);
+                ctx.drawImage(tempCanvas, 0, 0, 28, 28, 0, 0, 280, 280);
+
+                // Run the model
+                runModel();
+            } catch (error) {
+                console.error('Error fetching random MNIST image:', error);
+            }
+        }
+
+        loadModels();
+    </script>
+</body>
+
+</html>
