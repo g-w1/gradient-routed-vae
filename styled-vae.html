@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gradient Routed VAE: Axis Aligned Directions</title>
+    <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js"></script>
+    <style>
+        :root {
+            --primary: #4a90e2;
+            --danger: #e25555;
+            --gray: #f5f7fa;
+            --dark: #2c3e50;
+        }
+
+        body {
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            margin: 0;
+            padding: 2rem;
+            background: var(--gray);
+            color: var(--dark);
+            line-height: 1.6;
+        }
+
+        .wrapper {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        h1 {
+            font-size: 2.5rem;
+            margin-bottom: 2rem;
+            color: var(--dark);
+        }
+
+        h3 {
+            font-size: 1.5rem;
+            margin-bottom: 1rem;
+            color: var(--dark);
+        }
+
+        .container {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 2rem;
+            margin-bottom: 2rem;
+        }
+
+        .panel {
+            background: white;
+            padding: 1.5rem;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+
+        canvas {
+            border-radius: 8px;
+            background: black;
+            margin-bottom: 1rem;
+            display: block;
+        }
+
+        button {
+            padding: 0.75rem 1.5rem;
+            border: none;
+            border-radius: 6px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.1s, opacity 0.2s;
+            margin-right: 0.5rem;
+        }
+
+        button:active {
+            transform: scale(0.98);
+        }
+
+        button:hover {
+            opacity: 0.9;
+        }
+
+        .btn-primary {
+            background: var(--primary);
+            color: white;
+        }
+
+        .btn-danger {
+            background: var(--danger);
+            color: white;
+        }
+
+        .btn-secondary {
+            background: #718096;
+            color: white;
+        }
+
+        .slider-container {
+            background: white;
+            padding: 1.5rem;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            margin-bottom: 2rem;
+        }
+
+        .slider-row {
+            display: grid;
+            grid-template-columns: 120px 1fr 60px;
+            align-items: center;
+            gap: 1rem;
+            margin-bottom: 0.75rem;
+        }
+
+        .slider-row label {
+            font-weight: 500;
+            color: var(--dark);
+        }
+
+        .slider-row input[type="range"] {
+            width: 100%;
+        }
+
+        .slider-row span {
+            font-family: monospace;
+            text-align: right;
+            color: #64748b;
+        }
+
+        #vectorDisplay {
+            font-family: monospace;
+            background: #f8fafc;
+            padding: 1rem;
+            border-radius: 8px;
+            margin: 1rem 0;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+
+        @media (max-width: 768px) {
+            body {
+                padding: 1rem;
+            }
+
+            .container {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="wrapper">
+        <h1>Gradient Routed VAE: Axis Aligned Directions</h1>
+        <div class="container">
+            <div class="panel">
+                <h3>Input</h3>
+                <canvas id="drawingCanvas" width="280" height="280"></canvas>
+                <button class="btn-danger" onclick="clearCanvas()">Clear Canvas</button>
+                <button class="btn-primary" onclick="runModel()">Run Model</button>
+                <button class="btn-secondary" onclick="fetchRandomMNIST()">Random MNIST</button>
+            </div>
+            <div class="panel">
+                <h3>Output</h3>
+                <canvas id="outputCanvas" width="280" height="280"></canvas>
+            </div>
+        </div>
+
+        <div class="slider-container">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+                <h3 style="margin: 0;">Custom Decoding</h3>
+                <button class="btn-secondary" onclick="resetSliders()">Reset Sliders</button>
+            </div>
+            <div id="vectorDisplay">Current encoding vector: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]</div>
+            <div id="sliderContainer"></div>
+            <canvas id="customOutputCanvas" width="280" height="280"></canvas>
+        </div>
+    </div>
+
+    <script>
+        let encoderSession, decoderSession;
+        let isDrawing = false;
+        const drawingCanvas = document.getElementById('drawingCanvas');
+        const ctx = drawingCanvas.getContext('2d');
+        ctx.strokeStyle = 'white';
+        ctx.lineWidth = 20;
+        ctx.lineCap = 'round';
+        ctx.fillStyle = 'black';
+        ctx.fillRect(0, 0, drawingCanvas.width, drawingCanvas.height);
+
+        drawingCanvas.addEventListener('mousedown', startDrawing);
+        drawingCanvas.addEventListener('mousemove', draw);
+        drawingCanvas.addEventListener('mouseup', stopDrawing);
+        drawingCanvas.addEventListener('mouseout', stopDrawing);
+
+        function startDrawing(e) {
+            isDrawing = true;
+            draw(e);
+        }
+
+        function draw(e) {
+            if (!isDrawing) return;
+            const rect = drawingCanvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+            ctx.lineTo(x, y);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.moveTo(x, y);
+        }
+
+        function stopDrawing() {
+            isDrawing = false;
+            ctx.beginPath();
+        }
+
+        function clearCanvas() {
+            ctx.fillStyle = 'black';
+            ctx.fillRect(0, 0, drawingCanvas.width, drawingCanvas.height);
+        }
+
+        async function loadModels() {
+            try {
+                encoderSession = await ort.InferenceSession.create("vae_encoder.onnx");
+                decoderSession = await ort.InferenceSession.create("vae_decoder.onnx");
+                console.log("Models loaded successfully");
+                createSliders();
+            } catch (e) {
+                console.error("Failed to load the models:", e);
+            }
+        }
+
+        function updateVectorDisplay() {
+            const values = [];
+            for (let i = 0; i < 10; i++) {
+                values.push(parseFloat(document.getElementById(`slider${i}`).value).toFixed(1));
+            }
+            document.getElementById('vectorDisplay').textContent =
+                `Current encoding vector: [${values.join(', ')}]`;
+        }
+
+        function createSliders() {
+            const container = document.getElementById('sliderContainer');
+            for (let i = 0; i < 10; i++) {
+                const sliderRow = document.createElement('div');
+                sliderRow.className = 'slider-row';
+
+                const label = document.createElement('label');
+                label.textContent = `Dimension ${i}:`;
+
+                const slider = document.createElement('input');
+                slider.type = 'range';
+                slider.min = '0';
+                slider.max = '3';
+                slider.step = '0.1';
+                slider.value = '0';
+                slider.id = `slider${i}`;
+
+                const value = document.createElement('span');
+                value.textContent = '0.0';
+
+                slider.addEventListener('input', (e) => {
+                    value.textContent = parseFloat(e.target.value).toFixed(1);
+                    updateVectorDisplay();
+                    decodeCustom();
+                });
+
+                slider.addEventListener('change', decodeCustom);
+
+                sliderRow.appendChild(label);
+                sliderRow.appendChild(slider);
+                sliderRow.appendChild(value);
+
+                container.appendChild(sliderRow);
+            }
+        }
+
+        async function runModel() {
+            if (!encoderSession || !decoderSession) {
+                await loadModels();
+            }
+
+            const tempCanvas = document.createElement('canvas');
+            tempCanvas.width = 28;
+            tempCanvas.height = 28;
+            const tempCtx = tempCanvas.getContext('2d');
+            tempCtx.drawImage(drawingCanvas, 0, 0, 280, 280, 0, 0, 28, 28);
+
+            const imageData = tempCtx.getImageData(0, 0, 28, 28);
+            const input = new Float32Array(784);
+            for (let i = 0; i < 784; i++) {
+                input[i] = (imageData.data[i * 4] / 255);
+            }
+
+            const tensorInput = new ort.Tensor('float32', input, [1, 1, 28, 28]);
+
+            try {
+                // Run encoder
+                const encoderOutputs = await encoderSession.run({ input: tensorInput });
+                const mean = encoderOutputs.mean.data;
+
+                // Set slider values and update vector display
+                for (let i = 0; i < 10; i++) {
+                    const slider = document.getElementById(`slider${i}`);
+                    slider.value = mean[i];
+                    slider.nextElementSibling.textContent = mean[i].toFixed(1);
+                }
+                updateVectorDisplay();
+
+                // Display quantized input
+                displayQuantizedInput(tempCanvas);
+
+                // Run decoder with the encoded values
+                const decoderInput = new ort.Tensor('float32', mean, [1, 10]);
+                const decoderOutput = await decoderSession.run({ z: decoderInput });
+                const outputData = decoderOutput.output.data;
+
+                displayOutput(outputData, 'outputCanvas');
+                displayOutput(outputData, 'customOutputCanvas');
+
+            } catch (e) {
+                console.error("Failed to run the model:", e);
+            }
+        }
+
+        function displayQuantizedInput(tempCanvas) {
+            const quantizedCtx = tempCanvas.getContext('2d');
+
+            // Scale up the quantized image to match the original canvas size
+            const scaledCanvas = document.createElement('canvas');
+            scaledCanvas.width = 280;
+            scaledCanvas.height = 280;
+            const scaledCtx = scaledCanvas.getContext('2d');
+            scaledCtx.imageSmoothingEnabled = false;
+            scaledCtx.drawImage(tempCanvas, 0, 0, 28, 28, 0, 0, 280, 280);
+
+            // Clear the original drawing canvas and replace it with the quantized version
+            ctx.clearRect(0, 0, drawingCanvas.width, drawingCanvas.height);
+            ctx.drawImage(scaledCanvas, 0, 0);
+        }
+
+        async function decodeCustom() {
+            if (!decoderSession) {
+                await loadModels();
+            }
+
+            const customEncoding = [];
+            for (let i = 0; i < 10; i++) {
+                customEncoding.push(parseFloat(document.getElementById(`slider${i}`).value));
+            }
+
+            const tensorInput = new ort.Tensor('float32', new Float32Array(customEncoding), [1, 10]);
+
+            try {
+                const outputs = await decoderSession.run({ z: tensorInput });
+                const outputData = outputs.output.data;
+                displayOutput(outputData, 'customOutputCanvas');
+            } catch (e) {
+                console.error("Failed to run the decoder:", e);
+            }
+        }
+
+        function resetSliders() {
+            for (let i = 0; i < 10; i++) {
+                const slider = document.getElementById(`slider${i}`);
+                slider.value = 0;
+                slider.nextElementSibling.textContent = '0.0';
+            }
+            updateVectorDisplay();
+            decodeCustom();
+        }
+
+        function displayOutput(outputData, canvasId) {
+            const outputCanvas = document.getElementById(canvasId);
+            const outputCtx = outputCanvas.getContext('2d');
+            const outputImageData = outputCtx.createImageData(28, 28);
+            for (let i = 0; i < 784; i++) {
+                const value = Math.floor((1 - outputData[i]) * 255);
+                outputImageData.data[i * 4] = 255 - value;
+                outputImageData.data[i * 4 + 1] = 255 - value;
+                outputImageData.data[i * 4 + 2] = 255 - value;
+                outputImageData.data[i * 4 + 3] = 255;
+            }
+            outputCtx.putImageData(outputImageData, 0, 0);
+
+            // Scale up the output canvas
+            const scaledCanvas = document.createElement('canvas');
+            scaledCanvas.width = 280;
+            scaledCanvas.height = 280;
+            const scaledCtx = scaledCanvas.getContext('2d');
+            scaledCtx.imageSmoothingEnabled = false;
+            scaledCtx.drawImage(outputCanvas, 0, 0, 28, 28, 0, 0, 280, 280);
+            outputCtx.drawImage(scaledCanvas, 0, 0);
+        }
+
+        async function fetchRandomMNIST() {
+            try {
+                const response = await fetch('thousand.json');
+                const data = await response.json();
+                const randomIndex = Math.floor(Math.random() * data.length);
+                const randomMNIST = data[randomIndex];
+
+                // Display the random MNIST image on the canvas
+                const imageData = ctx.createImageData(28, 28);
+                for (let i = 0; i < 784; i++) {
+                    const value = randomMNIST[i];
+                    imageData.data[i * 4] = value;
+                    imageData.data[i * 4 + 1] = value;
+                    imageData.data[i * 4 + 2] = value;
+                    imageData.data[i * 4 + 3] = 255;
+                }
+
+                // Create a temporary canvas to hold the 28x28 image
+                const tempCanvas = document.createElement('canvas');
+                tempCanvas.width = 28;
+                tempCanvas.height = 28;
+                const tempCtx = tempCanvas.getContext('2d');
+                tempCtx.putImageData(imageData, 0, 0);
+
+                // Scale up the image to 280x280
+                ctx.clearRect(0, 0, drawingCanvas.width, drawingCanvas.height);
+                ctx.drawImage(tempCanvas, 0, 0, 28, 28, 0, 0, 280, 280);
+
+                // Run the model
+                runModel();
+            } catch (error) {
+                console.error('Error fetching random MNIST image:', error);
+            }
+        }
+
+        loadModels();
+    </script>
+</body>
+
+</html>

@@ -12,9 +12,6 @@ import tqdm
 from torch.utils.data import DataLoader
 from torchvision import datasets, transforms
 
-# get mnist dataset
-
-
 device = (
     t.device("mps")
     if t.backends.mps.is_available()
@@ -28,7 +25,7 @@ class VAE(nn.Module):
     def __init__(self, image_features=784, latent_size=10):
         super().__init__()
         self.latent_size = latent_size
-        steps = [2560, 320]
+        steps = [2048, 512]
         self.encoder = nn.Sequential(
             nn.Linear(in_features=image_features, out_features=steps[0]),
             nn.ReLU(),
@@ -96,15 +93,9 @@ class VAE(nn.Module):
             images
         )
         mask_one_hot = F.one_hot(labels, num_classes=self.latent_size).float()  # type: ignore
-        # mask_one_hot += (
-        #    0.2
-        #    * F.one_hot(
-        #        VAE.random_different_labels(labels), num_classes=self.latent_size
-        #    ).float()
-        # )  # type: ignore
-        unmask_one_hot = 1 - mask_one_hot
         encoded = (
-            mask_one_hot * encoded_unmasked + unmask_one_hot * encoded_unmasked.detach()
+            mask_one_hot * encoded_unmasked
+            + (1 - mask_one_hot) * encoded_unmasked.detach()
         )
         return encoded, zeta, mean_from_encoded, cov_diag_from_encoded
 
@@ -169,7 +160,10 @@ vae.to(device)
 optim = t.optim.Adam(vae.parameters(), lr=1e-3)
 # load everything onto the gpu first
 
-for epoch in range(20):
+lr = lambda epoch: 1e-3 * 0.95**epoch
+for epoch in range(100):
+    for param_group in optim.param_groups:
+        param_group["lr"] = lr(epoch)
     for images, labels in (pbar := tqdm.tqdm(dataloader)):
         images = einops.rearrange(
             images, "batch chan width height -> batch (chan width height)"
@@ -190,9 +184,9 @@ print("ENCODING SOME IMAGES")
 image_0 = next(iter(validation_dataloader))[0].to(device)
 image_0_vae = vae(image_0)
 for i in range(20):
-    plt.imshow(image_0[i].squeeze().cpu().numpy())
+    plt.imshow(image_0[i].squeeze().cpu().numpy(), cmap="gray")
     plt.show()
-    plt.imshow(image_0_vae[i].squeeze().detach().cpu().numpy())
+    plt.imshow(image_0_vae[i].squeeze().detach().cpu().numpy(), cmap="gray")
     plt.show()
 
 # explore the latent space
@@ -228,13 +222,13 @@ def decode_and_show(vec, scale=1.0, show=True):
     vector = vec.detach().cpu().numpy()
 
     # Plot the heatmap
-    ax1.imshow(vector.reshape(1, -1), aspect="auto")
+    ax1.imshow(vector.reshape(1, -1), aspect="auto", cmap="gray")
     ax1.set_title("Vector to decode")
 
     # Decode and show the image
     v = scale * t.tensor(vec).float().to(device)
     v_decoded = vae.decoder(v).reshape((1, 28, 28)).detach().cpu()
-    ax2.imshow(v_decoded[0])
+    ax2.imshow(v_decoded[0], cmap="gray")
     ax2.set_title("Decoded image")
 
     plt.tight_layout()
@@ -285,26 +279,26 @@ def create_gif_from_figures(figures, output_filename="animation.gif", fps=60):
 
 
 def lerp(start, end, pct):
-    """
-    pct should be between 0 and 1
-    """
-    return start + (end - start) * pct
+    return (1 - pct) * start + pct * end
 
 
 figs = []
-for i in range(9):
-    start = t.tensor([0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
-    start[i] = 1.5
-    end = t.tensor([0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
-    end[i + 1] = 1.5
-    for pct in t.arange(0, 1, 0.025):
-        figs.append(decode_and_show(lerp(start, end, pct), show=False))
+steps = t.arange(0, 10 - 1, 0.025)
+for pos in steps:
+    current_idx = int(pos)
+    pct = pos - current_idx  # How far between current and next position
+
+    current_encoding = t.zeros(10)
+    current_encoding[current_idx] = 1.5 * (1 - pct)
+    current_encoding[current_idx + 1] = 1.5 * pct
+
+    figs.append(decode_and_show(current_encoding, show=False))
 print(len(figs))
 create_gif_from_figures(figs, fps=300)
 
 # %%
 # save the weights
-SAVE = True
+SAVE = False
 if SAVE:
     t.save(vae.state_dict(), "vae.pth")
 else:
@@ -351,3 +345,5 @@ t.onnx.export(
 )
 
 print("ONNX models exported successfully.")
+
+# %%
