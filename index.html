@@ -7,71 +7,180 @@
     <title>Gradient Routed VAE: Axis Aligned Directions</title>
     <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js"></script>
     <style>
-        canvas {
-            border: 1px solid black;
-            margin-right: 20px;
+        :root {
+            --primary: #4a90e2;
+            --danger: #e25555;
+            --gray: #f5f7fa;
+            --dark: #2c3e50;
         }
 
-        #encoding {
-            font-family: monospace;
-            white-space: pre;
+        body {
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            margin: 0;
+            padding: 0.5rem;
+            background: var(--gray);
+            color: var(--dark);
+            line-height: 1;
+        }
+
+        .wrapper {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        h1 {
+            font-size: 2rem;
+            margin-bottom: 1rem;
+            color: var(--dark);
+        }
+
+        h3 {
+            font-size: 1.5rem;
+            margin-bottom: 0.5rem;
+            color: var(--dark);
         }
 
         .container {
-            display: flex;
-            margin-bottom: 20px;
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 2rem;
+            margin-bottom: 2rem;
+        }
+
+        .panel {
+            background: white;
+            padding-left: 1.5rem;
+            padding-right: 1.5rem;
+            padding-bottom: 1.5rem;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+
+
+        .panel h3 {
+            margin-top: 0.5rem;
+            margin-bottom: 0.5rem;
+        }
+
+        canvas {
+            border-radius: 8px;
+            background: black;
+            margin-bottom: 1rem;
+            display: block;
+        }
+
+        button {
+            padding: 0.75rem 1.5rem;
+            border: none;
+            border-radius: 6px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.1s, opacity 0.2s;
+            margin-right: 0.5rem;
+        }
+
+        button:active {
+            transform: scale(0.98);
+        }
+
+        button:hover {
+            opacity: 0.9;
+        }
+
+        .btn-primary {
+            background: var(--primary);
+            color: white;
+        }
+
+        .btn-danger {
+            background: var(--danger);
+            color: white;
+        }
+
+        .btn-secondary {
+            background: #718096;
+            color: white;
         }
 
         .slider-container {
-            display: flex;
-            flex-direction: column;
-            margin-bottom: 20px;
+            background: white;
+            padding: 1.5rem;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            margin-bottom: 2rem;
         }
 
         .slider-row {
-            display: flex;
+            display: grid;
+            grid-template-columns: 120px 1fr 60px;
             align-items: center;
-            margin-bottom: 5px;
+            gap: 1rem;
+            margin-bottom: 0.25;
         }
 
         .slider-row label {
-            width: 100px;
+            font-weight: 500;
+            color: var(--dark);
         }
 
-        .slider-row input {
-            width: 200px;
+        .slider-row input[type="range"] {
+            width: 100%;
         }
 
         .slider-row span {
-            width: 50px;
+            font-family: monospace;
             text-align: right;
+            color: #64748b;
+        }
+
+        #vectorDisplay {
+            font-family: monospace;
+            background: #f8fafc;
+            padding: 1rem;
+            border-radius: 8px;
+            margin: 1rem 0;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+
+        @media (max-width: 768px) {
+            body {
+                padding: 1rem;
+            }
+
+            .container {
+                grid-template-columns: 1fr;
+            }
         }
     </style>
 </head>
 
 <body>
-    <h1>Gradient Routed VAE: Axis Aligned Directions</h1>
-    <div class="container">
-        <div>
-            <h3>Input</h3>
-            <canvas id="drawingCanvas" width="280" height="280"></canvas>
-            <br>
-            <button onclick="clearCanvas()">Clear Canvas</button>
-            <button onclick="runModel()">Run Model</button>
-            <button onclick="fetchRandomMNIST()">Get Random MNIST Image</button>
-        </div>
-        <div>
-            <h3>Output</h3>
-            <canvas id="outputCanvas" width="280" height="280"></canvas>
+    <div class="wrapper">
+        <h1>Gradient Routed VAE: Axis Aligned Directions</h1>
+        <div class="container">
+            <div class="panel">
+                <h3>Input</h3>
+                <canvas id="drawingCanvas" width="280" height="280"></canvas>
+                <button class="btn-danger" onclick="clearCanvas()">Clear Canvas</button>
+                <button class="btn-primary" onclick="runModel()">Run Model</button>
+                <button class="btn-secondary" onclick="fetchRandomMNIST()">Get Random MNIST</button>
+            </div>
+            <div class="panel">
+                <h3>Output</h3>
+                <canvas id="outputCanvas" width="280" height="280"></canvas>
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+                    <h3 style="margin: 0;">Encoding Vector</h3>
+                    <button class="btn-secondary" onclick="resetSliders()">Reset Sliders</button>
+                </div>
+                <div id="vectorDisplay">[0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]</div>
+                <div id="sliderContainer"></div>
+            </div>
         </div>
     </div>
-    <button onclick="resetSliders()">Reset Sliders</button>
-    <h3>Custom Decoding:</h3>
-    <div class="slider-container" id="sliderContainer"></div>
-    <canvas id="customOutputCanvas" width="280" height="280"></canvas>
 
     <script>
-        let fullSession, encoderSession, decoderSession;
+        let encoderSession, decoderSession;
         let isDrawing = false;
         const drawingCanvas = document.getElementById('drawingCanvas');
         const ctx = drawingCanvas.getContext('2d');
@@ -114,7 +223,6 @@
 
         async function loadModels() {
             try {
-                fullSession = await ort.InferenceSession.create("vae_full.onnx");
                 encoderSession = await ort.InferenceSession.create("vae_encoder.onnx");
                 decoderSession = await ort.InferenceSession.create("vae_decoder.onnx");
                 console.log("Models loaded successfully");
@@ -122,6 +230,15 @@
             } catch (e) {
                 console.error("Failed to load the models:", e);
             }
+        }
+
+        function updateVectorDisplay() {
+            const values = [];
+            for (let i = 0; i < 10; i++) {
+                values.push(parseFloat(document.getElementById(`slider${i}`).value).toFixed(1));
+            }
+            document.getElementById('vectorDisplay').textContent =
+                `[${values.join(', ')}]`;
         }
 
         function createSliders() {
@@ -137,7 +254,7 @@
                 slider.type = 'range';
                 slider.min = '0';
                 slider.max = '3';
-                slider.step = '0.05';
+                slider.step = '0.1';
                 slider.value = '0';
                 slider.id = `slider${i}`;
 
@@ -146,6 +263,7 @@
 
                 slider.addEventListener('input', (e) => {
                     value.textContent = parseFloat(e.target.value).toFixed(1);
+                    updateVectorDisplay();
                     decodeCustom();
                 });
 
@@ -160,7 +278,7 @@
         }
 
         async function runModel() {
-            if (!fullSession || !encoderSession || !decoderSession) {
+            if (!encoderSession || !decoderSession) {
                 await loadModels();
             }
 
@@ -175,8 +293,6 @@
             for (let i = 0; i < 784; i++) {
                 input[i] = (imageData.data[i * 4] / 255);
             }
-            console.log(input);
-
 
             const tensorInput = new ort.Tensor('float32', input, [1, 1, 28, 28]);
 
@@ -184,26 +300,24 @@
                 // Run encoder
                 const encoderOutputs = await encoderSession.run({ input: tensorInput });
                 const mean = encoderOutputs.mean.data;
-                const logVar = encoderOutputs.log_var.data;
 
-
-                // Set slider values
+                // Set slider values and update vector display
                 for (let i = 0; i < 10; i++) {
                     const slider = document.getElementById(`slider${i}`);
                     slider.value = mean[i];
                     slider.nextElementSibling.textContent = mean[i].toFixed(1);
                 }
+                updateVectorDisplay();
 
-                // Display quantized input on the input canvas
+                // Display quantized input
                 displayQuantizedInput(tempCanvas);
 
-                // Run full VAE
-                const fullOutputs = await fullSession.run({ input: tensorInput });
-                const outputData = fullOutputs.output.data;
-                decodeCustom();
+                // Run decoder with the encoded values
+                const decoderInput = new ort.Tensor('float32', mean, [1, 10]);
+                const decoderOutput = await decoderSession.run({ z: decoderInput });
+                const outputData = decoderOutput.output.data;
 
-                displayOutput(outputData, 'outputCanvas');
-
+                displayOutput(outputData);
             } catch (e) {
                 console.error("Failed to run the model:", e);
             }
@@ -240,9 +354,7 @@
             try {
                 const outputs = await decoderSession.run({ z: tensorInput });
                 const outputData = outputs.output.data;
-
-                displayOutput(outputData, 'customOutputCanvas');
-
+                displayOutput(outputData);
             } catch (e) {
                 console.error("Failed to run the decoder:", e);
             }
@@ -254,11 +366,12 @@
                 slider.value = 0;
                 slider.nextElementSibling.textContent = '0.0';
             }
+            updateVectorDisplay();
             decodeCustom();
         }
 
-        function displayOutput(outputData, canvasId) {
-            const outputCanvas = document.getElementById(canvasId);
+        function displayOutput(outputData) {
+            const outputCanvas = document.getElementById('outputCanvas');
             const outputCtx = outputCanvas.getContext('2d');
             const outputImageData = outputCtx.createImageData(28, 28);
             for (let i = 0; i < 784; i++) {
