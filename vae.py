@@ -297,6 +297,23 @@ print(len(figs))
 create_gif_from_figures(figs, fps=300)
 
 # %%
+# classify from the argmax of the encoding
+correct = 0
+total = 0
+for images, labels in validation_dataloader:
+    images = einops.rearrange(
+        images, "batch chan width height -> batch (chan width height)"
+    )
+    images = images.to(device)
+    labels = labels.to(device)
+    encoded, *_ = vae.encode(images)
+    predicted = encoded.argmax(dim=-1)
+    correct += (predicted == labels).sum().item()
+    total += labels.size(0)
+print("accuracy", correct / total)
+
+
+# %%
 # save the weights
 SAVE = False
 if SAVE:
