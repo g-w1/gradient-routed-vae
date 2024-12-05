@@ -243,6 +243,7 @@
 
         function createSliders() {
             const container = document.getElementById('sliderContainer');
+            container.innerHTML = '';
             for (let i = 0; i < 10; i++) {
                 const sliderRow = document.createElement('div');
                 sliderRow.className = 'slider-row';
