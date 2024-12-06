@@ -162,8 +162,8 @@
             <div class="panel">
                 <h3>Input</h3>
                 <canvas id="drawingCanvas" width="280" height="280"></canvas>
-                <button class="btn-danger" onclick="clearCanvas()">Clear Canvas</button>
-                <button class="btn-primary" onclick="runModel()">Run Model</button>
+                <!--                <button class="btn-danger" onclick="clearCanvas()">Clear Canvas</button>
+                <button class="btn-primary" onclick="runModel()">Run Model</button> -->
                 <button class="btn-secondary" onclick="fetchRandomMNIST()">Get Random MNIST</button>
             </div>
             <div class="panel">
@@ -196,7 +196,7 @@
         drawingCanvas.addEventListener('mouseout', stopDrawing);
 
         function startDrawing(e) {
-            isDrawing = true;
+            isDrawing = false; // disable drawing
             draw(e);
         }
 
