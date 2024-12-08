@@ -70,24 +70,6 @@ class VAE(nn.Module):
         z.relu_()
         return z, zeta, mean_from_encoded, cov_diag_from_encoded
 
-    @t.inference_mode()
-    @staticmethod
-    def random_different_labels(labels: t.Tensor, num_classes: int = 10):
-        """
-        Returns new labels, ensuring that none are the same as the original labels.
-        """
-        new_labels = t.randint(0, num_classes, labels.size()).to(device)
-
-        # Generate mask where new_labels are the same as the original labels
-        mask = new_labels == labels
-
-        # Re-generate new labels only where the mask is True
-        while mask.any():
-            new_labels[mask] = t.randint(0, num_classes, (mask.sum(),)).to(device)  # type: ignore
-            mask = new_labels == labels
-
-        return new_labels
-
     def encode_and_mask(self, images: t.Tensor, labels: t.Tensor):
         encoded_unmasked, zeta, mean_from_encoded, cov_diag_from_encoded = self.encode(
             images
@@ -119,6 +101,7 @@ class VAE(nn.Module):
         return loss, mse_loss, kl_div_loss
 
 
+# we need these wrappers for exporting into onnx
 class EncoderWrapper(nn.Module):
     def __init__(self, vae):
         super().__init__()
@@ -158,7 +141,6 @@ validation_dataloader = DataLoader(validation_data, batch_size=128, shuffle=True
 vae = VAE()
 vae.to(device)
 optim = t.optim.Adam(vae.parameters(), lr=1e-3)
-# load everything onto the gpu first
 
 lr = lambda epoch: 1e-3 * 0.95**epoch
 for epoch in range(100):
@@ -189,43 +171,21 @@ for i in range(20):
     plt.imshow(image_0_vae[i].squeeze().detach().cpu().numpy(), cmap="gray")
     plt.show()
 
-# explore the latent space
-# print("EXPLORING THE LATENT SPACE")
-# n = 10
-# random_latents = t.randn((n, vae.latent_size)).to(device)
-# random_latents_decoded = vae.decoder(random_latents).reshape((n, 28, 28)).detach().cpu()
-# for i in range(n):
-#    plt.imshow(random_latents_decoded[i])
-#    plt.show()
-
-# print("Generating 0-9 from the interpretable dimensions")
-# for i in range(10):
-#    v = 1 * F.one_hot(t.tensor(i), num_classes=10).float().to(device)
-#    print(f"inputting {v} as latent space and decoding VAE:")
-#    v_decoded = vae.decoder(v).reshape((1, 28, 28)).detach().cpu()
-#    plt.imshow(v_decoded[0])
-#    plt.show()
-
-
 def decode_and_show(vec, scale=1.0, show=True):
     if show:
         print("decoding", vec)
 
-    # Create a figure with two subplots stacked vertically
     fig, (ax1, ax2) = plt.subplots(  # type: ignore
         2, 1, figsize=(8, 10), gridspec_kw={"height_ratios": [1, 3]}
     )
     ax1.axis("off")
     ax2.axis("off")
 
-    # Convert the input tensor to a numpy array for the heatmap
     vector = vec.detach().cpu().numpy()
 
-    # Plot the heatmap
     ax1.imshow(vector.reshape(1, -1), aspect="auto", cmap="gray")
     ax1.set_title("Vector to decode")
 
-    # Decode and show the image
     v = scale * t.tensor(vec).float().to(device)
     v_decoded = vae.decoder(v).reshape((1, 28, 28)).detach().cpu()
     ax2.imshow(v_decoded[0], cmap="gray")
@@ -256,20 +216,16 @@ def create_gif_from_figures(figures, output_filename="animation.gif", fps=60):
     Returns:
     str: The filename of the created GIF
     """
-    # Create a temporary directory to store image files
     with tempfile.TemporaryDirectory() as tmpdirname:
-        # Save figures as images
         image_files = []
         for i, fig in enumerate(figures):
             filename = os.path.join(tmpdirname, f"figure_{i}.png")
             fig.savefig(filename)
             image_files.append(filename)
-            plt.close(fig)  # Close the figure to free up memory
+            plt.close(fig)
 
-        # Calculate duration based on fps
         duration = 1 / fps
 
-        # Create GIF
         with imageio.get_writer(output_filename, mode="I", duration=duration) as writer:
             for filename in image_files:
                 image = imageio.imread(filename)
@@ -286,7 +242,7 @@ figs = []
 steps = t.arange(0, 10 - 1, 0.025)
 for pos in steps:
     current_idx = int(pos)
-    pct = pos - current_idx  # How far between current and next position
+    pct = pos - current_idx
 
     current_encoding = t.zeros(10)
     current_encoding[current_idx] = 1.5 * (1 - pct)
