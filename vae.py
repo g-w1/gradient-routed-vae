@@ -11,6 +11,7 @@ import torch.nn.functional as F
 import tqdm
 from torch.utils.data import DataLoader
 from torchvision import datasets, transforms
+import onnxruntime as ort
 
 device = (
     t.device("mps")
@@ -139,14 +140,15 @@ validation_data = datasets.MNIST(
 )
 validation_dataloader = DataLoader(validation_data, batch_size=128, shuffle=True)  # type: ignore
 vae = VAE()
+vae.compile()
 vae.to(device)
 optim = t.optim.Adam(vae.parameters(), lr=1e-3)
 
 lr = lambda epoch: 1e-3 * 0.95**epoch
-for epoch in range(100):
+for epoch in (pbar := tqdm.tqdm(range(100))):
     for param_group in optim.param_groups:
         param_group["lr"] = lr(epoch)
-    for images, labels in (pbar := tqdm.tqdm(dataloader)):
+    for images, labels in tqdm.tqdm(dataloader):
         images = einops.rearrange(
             images, "batch chan width height -> batch (chan width height)"
         )
@@ -170,6 +172,7 @@ for i in range(20):
     plt.show()
     plt.imshow(image_0_vae[i].squeeze().detach().cpu().numpy(), cmap="gray")
     plt.show()
+
 
 def decode_and_show(vec, scale=1.0, show=True):
     if show:
@@ -252,25 +255,9 @@ for pos in steps:
 print(len(figs))
 create_gif_from_figures(figs, fps=300)
 
-# %%
-# classify from the argmax of the encoding
-correct = 0
-total = 0
-for images, labels in validation_dataloader:
-    images = einops.rearrange(
-        images, "batch chan width height -> batch (chan width height)"
-    )
-    images = images.to(device)
-    labels = labels.to(device)
-    encoded, *_ = vae.encode(images)
-    predicted = encoded.argmax(dim=-1)
-    correct += (predicted == labels).sum().item()
-    total += labels.size(0)
-print("accuracy", correct / total)
-
 
 # %%
-# save the weights
+# save / load the weights
 SAVE = False
 if SAVE:
     t.save(vae.state_dict(), "vae.pth")
@@ -318,5 +305,23 @@ t.onnx.export(
 )
 
 print("ONNX models exported successfully.")
+
+# %%
+# load the encoder and then check the classification accuracy on the validation set
+# load from onnx
+
+encoder_session = ort.InferenceSession("vae_encoder.onnx")
+
+correct = 0
+total = 0
+for images, labels in validation_dataloader:
+    images = images.to(device)
+    labels = labels.to(device)
+    mean, log_var = encoder_session.run(None, {"input": images.cpu().numpy()})
+    mean = t.tensor(mean).to(device)
+    log_var = t.tensor(log_var).to(device)
+    total += labels.size(0)
+    correct += (mean.argmax(dim=-1) == labels).sum().item()
+print(f"Classification accuracy from encoding: {correct / total}")
 
 # %%
